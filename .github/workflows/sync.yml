@@ -13,66 +13,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  update:
+  sync:
     runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.pin.outputs.changed }}
-      rev: ${{ steps.pin.outputs.rev }}
-      version: ${{ steps.pin.outputs.version }}
+    # Bound runaway cost; a normal run is ~1 minute.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
 
       - name: Update pin
         id: pin
         uses: ./.github/actions/update-pin
 
-      - uses: actions/upload-artifact@v4
-        if: steps.pin.outputs.changed == 'true'
-        with:
-          name: pin
-          path: pin.json
-
-  build-push:
-    needs: update
-    if: needs.update.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: pin
-
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
       - name: Build and push
+        if: steps.pin.outputs.changed == 'true'
         uses: ./.github/actions/build-push
         with:
           endpoint: https://attic.cloud.dmytros.dev
           cache: cache
           token: ${{ secrets.ATTIC_TOKEN }}
 
-  commit:
-    needs: [update, build-push]
-    if: needs.update.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: pin
-
       - name: Commit pin
+        if: steps.pin.outputs.changed == 'true'
         uses: ./.github/actions/commit-pin
         with:
-          version: ${{ needs.update.outputs.version }}
-          rev: ${{ needs.update.outputs.rev }}
+          version: ${{ steps.pin.outputs.version }}
+          rev: ${{ steps.pin.outputs.rev }}

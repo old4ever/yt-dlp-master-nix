@@ -33,6 +33,14 @@ runs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
         fi
 
+    # Installed only when there is work: an unchanged run bills seconds, not a
+    # Nix setup.
+    - uses: cachix/install-nix-action@v31
+      if: steps.pin.outputs.changed == 'true'
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
     - name: Write pin
       if: steps.pin.outputs.changed == 'true'
       shell: bash
