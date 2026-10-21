@@ -32,15 +32,17 @@ nix run github:old4ever/yt-dlp-master-nix
 - `pin.json` holds the upstream revision, its source hash, and the version
   stamped into `yt_dlp/version.py` (upstream master keeps reporting the last
   release).
-- `.github/workflows/sync.yml` runs daily and is split into three jobs:
-  1. `update` (action `./.github/actions/update-pin`) resolves `master`,
-     compares it with `pin.json`, prefetches the source hash and writes the pin.
-  2. `build-push` (action `./.github/actions/build-push`) builds `.#yt-dlp`
-     and pushes the outputs to the `cache` on `attic.cloud.dmytros.dev`.
-  3. `commit` (action `./.github/actions/commit-pin`) commits `pin.json` — only
-     after the build and push succeeded.
+- `.github/workflows/sync.yml` runs daily in one job that chains three
+  composite actions, so an unchanged day costs one short job and no Nix setup:
+  1. `update-pin` resolves `master` with `curl`/`jq`, compares it with
+     `pin.json`, and only then installs Nix, prefetches the source hash and
+     writes the pin.
+  2. `build-push` builds `.#yt-dlp` and pushes the outputs to the `cache` on
+     `attic.cloud.dmytros.dev`.
+  3. `commit-pin` commits `pin.json` — only after the build and push succeeded.
 - It needs one repository secret: `ATTIC_TOKEN`, an Attic token with `push` on
-  `cache`. Without a change upstream the run stops after `update`.
+  `cache`. `timeout-minutes: 20` bounds a runaway run.
+
 
 ## Files
 
