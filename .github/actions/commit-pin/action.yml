@@ -1,0 +1,22 @@
+name: Commit pin
+description: Commit and push pin.json
+
+inputs:
+  version:
+    description: Version used in the commit message
+    required: true
+  rev:
+    description: Upstream revision used in the commit message
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Commit
+      shell: bash
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add pin.json
+        git commit -m "yt-dlp master ${{ inputs.version }} (${{ inputs.rev }})"
+        git push

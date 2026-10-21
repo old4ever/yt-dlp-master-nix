@@ -1,0 +1,46 @@
+name: Update pin
+description: Resolve yt-dlp master and write pin.json when it moved
+
+outputs:
+  changed:
+    description: "true when pin.json was rewritten"
+    value: ${{ steps.pin.outputs.changed }}
+  rev:
+    description: Upstream commit SHA
+    value: ${{ steps.upstream.outputs.rev }}
+  version:
+    description: Version stamped into the package
+    value: ${{ steps.upstream.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve upstream master
+      id: upstream
+      shell: bash
+      run: |
+        commit=$(curl -fsSL https://api.github.com/repos/yt-dlp/yt-dlp/commits/master)
+        echo "rev=$(jq -r .sha <<<"$commit")" >> "$GITHUB_OUTPUT"
+        echo "version=$(jq -r .commit.committer.date <<<"$commit" | cut -c1-10 | tr - .)" >> "$GITHUB_OUTPUT"
+
+    - name: Compare with pin
+      id: pin
+      shell: bash
+      run: |
+        if [ "$(jq -r .rev pin.json)" = "${{ steps.upstream.outputs.rev }}" ]; then
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Write pin
+      if: steps.pin.outputs.changed == 'true'
+      shell: bash
+      run: |
+        url="https://github.com/yt-dlp/yt-dlp/archive/${{ steps.upstream.outputs.rev }}.tar.gz"
+        hash=$(nix store prefetch-file --unpack --json "$url" | jq -r .hash)
+        jq -n \
+          --arg rev '${{ steps.upstream.outputs.rev }}' \
+          --arg hash "$hash" \
+          --arg version '${{ steps.upstream.outputs.version }}' \
+          '{rev: $rev, hash: $hash, version: $version}' > pin.json

@@ -1,0 +1,44 @@
+name: Build and push
+description: Build the pinned yt-dlp and push its outputs to an Attic cache
+
+inputs:
+  endpoint:
+    description: Attic server URL
+    required: true
+  cache:
+    description: Attic cache name
+    required: true
+  token:
+    description: Attic token with push permission on the cache
+    required: true
+
+outputs:
+  paths:
+    description: Built store paths, one per line
+    value: ${{ steps.build.outputs.paths }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build
+      id: build
+      shell: bash
+      run: |
+        nix build --print-out-paths .#yt-dlp | tee paths.txt
+        {
+          echo "paths<<EOF"
+          cat paths.txt
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Push
+      shell: bash
+      env:
+        ATTIC_TOKEN: ${{ inputs.token }}
+        ATTIC_ENDPOINT: ${{ inputs.endpoint }}
+        ATTIC_CACHE: ${{ inputs.cache }}
+      run: |
+        attic=$(nix build --no-link --print-out-paths nixpkgs#attic-client)/bin/attic
+        "$attic" login ci "$ATTIC_ENDPOINT" "$ATTIC_TOKEN"
+        # shellcheck disable=SC2046
+        "$attic" push "ci:$ATTIC_CACHE" $(cat paths.txt)

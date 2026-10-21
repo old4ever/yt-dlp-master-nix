@@ -8,9 +8,17 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
 jobs:
-  sync:
+  update:
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.pin.outputs.changed }}
+      rev: ${{ steps.pin.outputs.rev }}
+      version: ${{ steps.pin.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,53 +27,52 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Resolve upstream master
-        id: upstream
-        run: |
-          commit=$(curl -fsSL https://api.github.com/repos/yt-dlp/yt-dlp/commits/master)
-          rev=$(jq -r .sha <<<"$commit")
-          version=$(jq -r .commit.committer.date <<<"$commit" | cut -c1-10 | tr - .)
-          echo "rev=$rev" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Compare with pin
-        id: pin
-        run: |
-          if [ "$(jq -r .rev pin.json)" = "${{ steps.upstream.outputs.rev }}" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Update pin
-        if: steps.pin.outputs.changed == 'true'
-        run: |
-          url="https://github.com/yt-dlp/yt-dlp/archive/${{ steps.upstream.outputs.rev }}.tar.gz"
-          hash=$(nix store prefetch-file --unpack --json "$url" | jq -r .hash)
-          jq -n \
-            --arg rev '${{ steps.upstream.outputs.rev }}' \
-            --arg hash "$hash" \
-            --arg version '${{ steps.upstream.outputs.version }}' \
-            '{rev: $rev, hash: $hash, version: $version}' > pin.json
+        id: pin
+        uses: ./.github/actions/update-pin
 
-      - name: Build
+      - uses: actions/upload-artifact@v4
         if: steps.pin.outputs.changed == 'true'
-        run: nix build --print-out-paths .#yt-dlp > paths.txt
+        with:
+          name: pin
+          path: pin.json
 
-      - name: Push to Attic
-        if: steps.pin.outputs.changed == 'true'
-        env:
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
-        run: |
-          nix shell nixpkgs#attic-client -c attic login ci https://attic.cloud.dmytros.dev "$ATTIC_TOKEN"
-          # shellcheck disable=SC2046
-          nix shell nixpkgs#attic-client -c attic push ci:cache $(cat paths.txt)
+  build-push:
+    needs: update
+    if: needs.update.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pin
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build and push
+        uses: ./.github/actions/build-push
+        with:
+          endpoint: https://attic.cloud.dmytros.dev
+          cache: cache
+          token: ${{ secrets.ATTIC_TOKEN }}
+
+  commit:
+    needs: [update, build-push]
+    if: needs.update.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pin
 
       - name: Commit pin
-        if: steps.pin.outputs.changed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pin.json
-          git commit -m "yt-dlp master ${{ steps.upstream.outputs.version }} (${{ steps.upstream.outputs.rev }})"
-          git push
+        uses: ./.github/actions/commit-pin
+        with:
+          version: ${{ needs.update.outputs.version }}
+          rev: ${{ needs.update.outputs.rev }}
